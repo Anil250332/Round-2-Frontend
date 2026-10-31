@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { useForm } from 'react-hook-form';
 import confetti from 'canvas-confetti';
 import {
   Gavel,
@@ -14,8 +15,11 @@ import {
   TrendingUp,
   Sliders,
   X,
-  Radio,
+  User,
+  UserCheck,
   Lock,
+  Edit2,
+  ShieldCheck,
 } from 'lucide-react';
 
 const BACKEND_URL = 'http://localhost:5000';
@@ -23,30 +27,84 @@ const BACKEND_URL = 'http://localhost:5000';
 export default function App() {
   const [auction, setAuction] = useState(null);
   const [bids, setBids] = useState([]);
-  const [bidderName, setBidderName] = useState('Alex Rivera');
-  const [bidAmount, setBidAmount] = useState('');
+  const [participantName, setParticipantName] = useState(() => {
+    return localStorage.getItem('auction_participant_name') || '';
+  });
+  const [showNameModal, setShowNameModal] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [rejectionError, setRejectionError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
+  const [serverRejectionError, setServerRejectionError] = useState(null);
+  const [serverSuccessMessage, setServerSuccessMessage] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminDuration, setAdminDuration] = useState(120);
-  const [adminStartPrice, setAdminStartPrice] = useState(1000);
   const [newBidHighlight, setNewBidHighlight] = useState(false);
 
   const socketRef = useRef(null);
   const timerRef = useRef(null);
   const hasTriggeredConfettiRef = useRef(false);
 
-  // Trigger monochrome confetti celebration
-  const triggerMonochromeConfetti = () => {
+  // 1. React Hook Form for Participant Name Registration Dialog
+  const {
+    register: registerName,
+    handleSubmit: handleNameSubmit,
+    formState: { errors: nameErrors },
+    setValue: setNameValue,
+  } = useForm({
+    defaultValues: {
+      name: participantName || '',
+    },
+  });
+
+  // 2. React Hook Form for Bidding
+  const {
+    register: registerBid,
+    handleSubmit: handleBidSubmit,
+    formState: { errors: bidErrors },
+    setValue: setBidValue,
+    watch: watchBid,
+    reset: resetBidForm,
+  } = useForm({
+    defaultValues: {
+      amount: '',
+    },
+  });
+
+  // 3. React Hook Form for Organizer / Admin Controls
+  const {
+    register: registerAdmin,
+    handleSubmit: handleAdminSubmit,
+    formState: { errors: adminErrors },
+    setValue: setAdminValue,
+    watch: watchAdmin,
+  } = useForm({
+    defaultValues: {
+      durationSeconds: 120,
+      startingPrice: 1000,
+    },
+  });
+
+  const watchedBidAmount = watchBid('amount');
+  const watchedAdminDuration = watchAdmin('durationSeconds');
+
+  // Show name entry dialog if no participant name is saved on initial mount
+  useEffect(() => {
+    const savedName = localStorage.getItem('auction_participant_name');
+    if (!savedName || !savedName.trim()) {
+      setShowNameModal(true);
+    } else {
+      setParticipantName(savedName.trim());
+      setNameValue('name', savedName.trim());
+    }
+  }, [setNameValue]);
+
+  // Trigger celebration confetti when auction ends with a winner
+  const triggerCelebration = () => {
     confetti({
-      particleCount: 80,
-      spread: 70,
+      particleCount: 90,
+      spread: 75,
       origin: { y: 0.6 },
-      colors: ['#ffffff', '#a1a1aa', '#71717a', '#27272a', '#e4e4e7'],
+      colors: ['#0f172a', '#3b82f6', '#10b981', '#f59e0b', '#6366f1'],
     });
   };
 
@@ -59,13 +117,13 @@ export default function App() {
         setAuction(data.auction);
         setBids(data.bids || []);
         setRemainingSeconds(data.auction.remainingSeconds);
-        // Pre-fill bid amount with a smart suggestion
+
         const nextMin = (data.auction.currentHighestBidder ? data.auction.currentHighestBid : data.auction.startingPrice) + 100;
-        setBidAmount(String(nextMin));
+        setBidValue('amount', nextMin);
 
         if (data.auction.status === 'ENDED' && data.auction.winner && !hasTriggeredConfettiRef.current) {
           hasTriggeredConfettiRef.current = true;
-          triggerMonochromeConfetti();
+          triggerCelebration();
         }
       }
     } catch (err) {
@@ -75,7 +133,7 @@ export default function App() {
     }
   };
 
-  // Setup Socket.io connection and real-time listeners
+  // Setup Socket.io connection and listeners
   useEffect(() => {
     fetchAuctionData();
 
@@ -86,12 +144,12 @@ export default function App() {
 
     socket.on('connect', () => {
       setSocketConnected(true);
-      console.log('[Socket Connected]:', socket.id);
+      console.log('[Socket.io Connected]:', socket.id);
     });
 
     socket.on('disconnect', () => {
       setSocketConnected(false);
-      console.log('[Socket Disconnected]');
+      console.log('[Socket.io Disconnected]');
     });
 
     socket.on('initial_state', (data) => {
@@ -106,12 +164,12 @@ export default function App() {
       setAuction(data.auction);
       setBids(data.bids || []);
       setRemainingSeconds(data.auction.remainingSeconds);
-      // Flash highlight animation
-      setNewBidHighlight(true);
-      setTimeout(() => setNewBidHighlight(false), 1500);
 
-      // Pre-fill next minimum recommended bid
-      setBidAmount(String(data.auction.currentHighestBid + 50));
+      setNewBidHighlight(true);
+      setTimeout(() => setNewBidHighlight(false), 1400);
+
+      // Pre-populate next recommended bid
+      setBidValue('amount', data.auction.currentHighestBid + 50);
     });
 
     socket.on('auction_ended', (data) => {
@@ -119,7 +177,7 @@ export default function App() {
       setRemainingSeconds(0);
       if (data.winner && !hasTriggeredConfettiRef.current) {
         hasTriggeredConfettiRef.current = true;
-        triggerMonochromeConfetti();
+        triggerCelebration();
       }
     });
 
@@ -128,16 +186,16 @@ export default function App() {
       setBids(data.bids || []);
       setRemainingSeconds(data.auction.remainingSeconds);
       hasTriggeredConfettiRef.current = false;
-      setRejectionError(null);
-      setSuccessMessage('Auction reset! New timed session is active.');
-      setTimeout(() => setSuccessMessage(null), 3000);
-      setBidAmount(String(data.auction.startingPrice + 50));
+      setServerRejectionError(null);
+      setServerSuccessMessage('Auction reset! New timed session is active.');
+      setTimeout(() => setServerSuccessMessage(null), 3000);
+      setBidValue('amount', data.auction.startingPrice + 50);
     });
 
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [setBidValue]);
 
   // Synchronized countdown timer tick
   useEffect(() => {
@@ -153,7 +211,6 @@ export default function App() {
       setRemainingSeconds(diff);
 
       if (diff <= 0 && auction.status === 'ACTIVE') {
-        // Auction ended locally
         setAuction((prev) => ({
           ...prev,
           status: 'ENDED',
@@ -163,7 +220,7 @@ export default function App() {
         }));
         if (auction.currentHighestBidder && !hasTriggeredConfettiRef.current) {
           hasTriggeredConfettiRef.current = true;
-          triggerMonochromeConfetti();
+          triggerCelebration();
         }
       }
     };
@@ -174,54 +231,47 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [auction?.endTime, auction?.status]);
 
-  // Handle participant submitting a bid
-  const handlePlaceBid = async (e) => {
-    e.preventDefault();
-    setRejectionError(null);
-    setSuccessMessage(null);
+  // Handle Participant Name Submission
+  const onSaveParticipantName = (data) => {
+    const trimmed = data.name.trim();
+    setParticipantName(trimmed);
+    localStorage.setItem('auction_participant_name', trimmed);
+    setShowNameModal(false);
+  };
 
-    const numericAmount = Number(bidAmount);
+  // Handle Bidding Submission via React Hook Form
+  const onPlaceBid = async (formData) => {
+    setServerRejectionError(null);
+    setServerSuccessMessage(null);
 
-    if (!bidderName.trim()) {
-      setRejectionError('Please enter your participant name.');
+    // If user somehow doesn't have a name set, ask for it
+    if (!participantName || !participantName.trim()) {
+      setShowNameModal(true);
       return;
     }
 
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      setRejectionError('Please enter a valid numeric bid amount.');
-      return;
-    }
-
-    // Client-side quick check
-    const currentMax = auction.currentHighestBidder ? auction.currentHighestBid : auction.startingPrice - 1;
-    if (numericAmount <= currentMax) {
-      const reason = auction.currentHighestBidder
-        ? `Bid rejected: Your bid of $${numericAmount.toLocaleString()} must be strictly higher than current highest bid of $${auction.currentHighestBid.toLocaleString()}.`
-        : `Bid rejected: Your bid of $${numericAmount.toLocaleString()} must be at least the starting price of $${auction.startingPrice.toLocaleString()}.`;
-      setRejectionError(reason);
-      return;
-    }
-
+    const numericAmount = Number(formData.amount);
     setSubmitting(true);
+
     try {
       const res = await fetch(`${BACKEND_URL}/api/bid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bidderName: bidderName.trim(),
+          bidderName: participantName.trim(),
           amount: numericAmount,
         }),
       });
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setRejectionError(data.message || 'Bid rejected by auction server.');
+        setServerRejectionError(data.message || 'Bid rejected by auction server.');
       } else {
-        setSuccessMessage(`Success! Bid of $${numericAmount.toLocaleString()} placed by ${bidderName}.`);
-        setTimeout(() => setSuccessMessage(null), 4000);
+        setServerSuccessMessage(`Bid of $${numericAmount.toLocaleString()} placed successfully by ${participantName}!`);
+        setTimeout(() => setServerSuccessMessage(null), 4000);
       }
     } catch (err) {
-      setRejectionError(`Network error: ${err.message}`);
+      setServerRejectionError(`Network error: ${err.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -231,23 +281,23 @@ export default function App() {
   const handleQuickAdd = (increment) => {
     const base = auction?.currentHighestBidder ? auction.currentHighestBid : auction?.startingPrice || 1000;
     const nextVal = base + increment;
-    setBidAmount(String(nextVal));
-    setRejectionError(null);
+    setBidValue('amount', nextVal, { shouldValidate: true });
+    setServerRejectionError(null);
   };
 
-  // Admin Reset Handler
-  const handleAdminReset = async () => {
+  // Organizer Reset Submission via React Hook Form
+  const onAdminReset = async (data) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/auction/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          durationSeconds: Number(adminDuration),
-          startingPrice: Number(adminStartPrice),
+          durationSeconds: Number(data.durationSeconds),
+          startingPrice: Number(data.startingPrice),
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const result = await res.json();
+      if (result.success) {
         setShowAdminModal(false);
       }
     } catch (err) {
@@ -262,236 +312,264 @@ export default function App() {
   };
 
   const isAuctionEnded = auction?.status === 'ENDED' || remainingSeconds <= 0;
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
-        <div className="w-12 h-12 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4"></div>
-        <p className="text-zinc-400 font-mono text-sm tracking-wider uppercase">Initializing Event Auction...</p>
-      </div>
-    );
-  }
-
   const currentLeader = auction?.currentHighestBidder;
   const highestBidVal = auction?.currentHighestBid || auction?.startingPrice || 1000;
   const startingPrice = auction?.startingPrice || 1000;
   const totalBidsCount = bids.length;
+  const minimumRequiredBid = currentLeader ? highestBidVal + 1 : startingPrice;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center p-6">
+        <div className="w-10 h-10 border-3 border-slate-200 border-t-slate-800 rounded-full animate-spin mb-4"></div>
+        <p className="text-slate-500 font-mono text-sm tracking-wider uppercase">Loading Event Auction...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* Top Monochrome Header */}
-      <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur sticky top-0 z-30">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      {/* Top Light Navbar */}
+      <header className="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-white text-black flex items-center justify-center rounded-sm font-black text-lg shadow-sm">
+            <div className="w-9 h-9 bg-slate-900 text-white flex items-center justify-center rounded-lg shadow-xs">
               <Gavel className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold tracking-tight text-white text-base sm:text-lg">CODERUSH</span>
-                <span className="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded font-mono border border-zinc-700">R2-01</span>
+                <span className="font-extrabold tracking-tight text-slate-900 text-base sm:text-lg">CODERUSH</span>
+                <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono border border-slate-300 font-semibold">
+                  R2-01
+                </span>
               </div>
-              <p className="text-xs text-zinc-400 hidden sm:block">Event Timed Auction System</p>
+              <p className="text-xs text-slate-500 hidden sm:block">Event Timed Auction System</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-4">
-            {/* Live Socket Status */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
-              <span className={`w-2 h-2 rounded-full ${socketConnected ? 'bg-white animate-pulse' : 'bg-zinc-600'}`}></span>
-              <span className="hidden sm:inline font-mono">{socketConnected ? 'REAL-TIME SYNC' : 'OFFLINE'}</span>
+          <div className="flex items-center gap-2 sm:gap-4">
+            {/* Live Socket Status Badge */}
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs text-slate-600">
+              <span className={`w-2 h-2 rounded-full ${socketConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+              <span className="hidden md:inline font-mono font-medium">{socketConnected ? 'LIVE SYNC' : 'CONNECTING'}</span>
             </div>
 
-            {/* Organizer Reset Button */}
+            {/* Active Participant Pill with Edit Option */}
+            {participantName ? (
+              <div
+                onClick={() => setShowNameModal(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs text-slate-800 cursor-pointer transition-colors shadow-2xs"
+                title="Click to change your participant name"
+              >
+                <div className="w-5 h-5 rounded-full bg-slate-800 text-white flex items-center justify-center text-[10px] font-bold uppercase">
+                  {participantName.charAt(0)}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500 hidden sm:inline">Participant:</span>
+                  <span className="font-semibold text-slate-900 max-w-[120px] truncate">{participantName}</span>
+                  <Edit2 className="w-3 h-3 text-slate-400 ml-0.5" />
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowNameModal(true)}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors shadow-2xs cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5" />
+                Join as Participant
+              </button>
+            )}
+
+            {/* Organizer Quick-Control Button */}
             <button
               onClick={() => setShowAdminModal(true)}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded transition-colors cursor-pointer"
-              title="Reset Auction / Timer settings for Hackathon judging"
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg transition-colors cursor-pointer"
+              title="Organizer / Judge Controls"
             >
-              <Sliders className="w-3.5 h-3.5" />
+              <Sliders className="w-3.5 h-3.5 text-slate-600" />
               <span className="hidden sm:inline">Organizer Controls</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content Layout */}
+      {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full">
-        {/* Banner: Auction Status & Winner Callout if Ended */}
+        {/* Banner: Auction Finished & Winner Callout */}
         {isAuctionEnded ? (
-          <div className="mb-8 p-6 rounded-lg bg-zinc-950 border border-white/30 relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="mb-8 p-6 rounded-xl bg-white border border-slate-200 shadow-md relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-slate-100 rounded-full blur-3xl pointer-events-none"></div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
               <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center shrink-0">
-                  <Trophy className="w-7 h-7" />
+                <div className="w-14 h-14 rounded-full bg-slate-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <Trophy className="w-7 h-7 text-amber-300" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono tracking-widest uppercase px-2 py-0.5 bg-white text-black rounded font-bold">
+                    <span className="text-xs font-mono tracking-wider uppercase px-2.5 py-0.5 bg-slate-900 text-white rounded font-bold">
                       AUCTION CONCLUDED
                     </span>
-                    <span className="text-xs text-zinc-400 font-mono">Bidding Stopped</span>
+                    <span className="text-xs text-slate-500 font-mono">Bidding Stopped</span>
                   </div>
-                  <h2 className="text-xl sm:text-2xl font-bold mt-1 text-white">
+                  <h2 className="text-xl sm:text-2xl font-bold mt-1 text-slate-900">
                     {auction?.winner ? (
-                      <>Winner: <span className="underline underline-offset-4 decoration-white">{auction.winner.name}</span></>
+                      <>Winner: <span className="underline underline-offset-4 decoration-slate-400">{auction.winner.name}</span></>
                     ) : (
                       'No Winner (No bids placed)'
                     )}
                   </h2>
-                  <p className="text-sm text-zinc-400 mt-0.5">
+                  <p className="text-sm text-slate-600 mt-0.5">
                     {auction?.winner
-                      ? `Final winning bid: $${auction.winner.amount.toLocaleString()} • Hammer dropped`
-                      : 'The auction has completed with zero bids exceeding starting price.'}
+                      ? `Final winning price: $${auction.winner.amount.toLocaleString()} • Hammer dropped`
+                      : 'The auction has ended with zero qualifying bids.'}
                   </p>
                 </div>
               </div>
 
               <button
                 onClick={() => setShowAdminModal(true)}
-                className="px-4 py-2 bg-white text-black font-semibold text-xs rounded hover:bg-zinc-200 transition-colors flex items-center gap-2 self-start sm:self-auto cursor-pointer"
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-2 self-start sm:self-auto cursor-pointer shadow-xs"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                Start New Auction
+                Restart Auction
               </button>
             </div>
           </div>
         ) : null}
 
-        {/* 2-Column Grid */}
+        {/* 2-Column Responsive Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* LEFT COLUMN: Item Display & Description (Cols 1 to 5) */}
+          {/* LEFT COLUMN: Item Display & Lot Specs */}
           <div className="lg:col-span-5 space-y-6">
-            <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
-              {/* Item Image with Monochrome styling */}
-              <div className="relative aspect-square w-full bg-zinc-900 border-b border-zinc-800 overflow-hidden group">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              {/* Product Photo */}
+              <div className="relative aspect-square w-full bg-slate-100 border-b border-slate-200 overflow-hidden group">
                 <img
                   src={auction?.imageUrl || '/item.jpg'}
                   alt={auction?.title || 'Auction Item'}
-                  className="w-full h-full object-cover grayscale contrast-125 filter group-hover:scale-105 transition-transform duration-500"
+                  className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-500"
                 />
                 <div className="absolute top-3 left-3 flex items-center gap-2">
-                  <span className={`px-2.5 py-1 text-xs font-mono font-bold tracking-wider rounded ${
+                  <span className={`px-2.5 py-1 text-xs font-mono font-bold tracking-wider rounded-md shadow-xs ${
                     isAuctionEnded
-                      ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                      : 'bg-white text-black flex items-center gap-1.5'
+                      ? 'bg-slate-200 text-slate-700 border border-slate-300'
+                      : 'bg-slate-900 text-white flex items-center gap-1.5'
                   }`}>
-                    {!isAuctionEnded && <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping"></span>}
-                    {isAuctionEnded ? 'CLOSED' : 'LIVE LOT #01'}
+                    {!isAuctionEnded && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>}
+                    {isAuctionEnded ? 'AUCTION CLOSED' : 'LIVE LOT #01'}
                   </span>
                 </div>
-                <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/80 backdrop-blur border border-zinc-700 text-zinc-300 font-mono text-xs rounded">
+                <div className="absolute bottom-3 right-3 px-2.5 py-1 bg-white/90 backdrop-blur border border-slate-200 text-slate-800 font-mono text-xs rounded-md shadow-2xs font-medium">
                   Reserve Met
                 </div>
               </div>
 
-              {/* Item Details */}
+              {/* Product Info */}
               <div className="p-6">
-                <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 mb-2">
                   {auction?.title}
                 </h1>
-                <p className="text-zinc-400 text-sm leading-relaxed mb-6">
+                <p className="text-slate-600 text-sm leading-relaxed mb-6">
                   {auction?.description}
                 </p>
 
-                {/* Starting Price & Item Specs */}
-                <div className="border-t border-zinc-900 pt-4 grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-zinc-900/60 rounded border border-zinc-800/80">
-                    <span className="text-xs uppercase font-mono text-zinc-400 tracking-wider block">Starting Price</span>
-                    <span className="text-xl font-bold text-white font-mono-numbers mt-0.5 block">
+                {/* Starting Price & Lot Stats */}
+                <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4">
+                  <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-xs uppercase font-mono text-slate-500 tracking-wider block font-medium">Starting Price</span>
+                    <span className="text-xl font-bold text-slate-900 font-mono-numbers mt-0.5 block">
                       ${startingPrice.toLocaleString()}
                     </span>
                   </div>
 
-                  <div className="p-3 bg-zinc-900/60 rounded border border-zinc-800/80">
-                    <span className="text-xs uppercase font-mono text-zinc-400 tracking-wider block">Total Bids Placed</span>
-                    <span className="text-xl font-bold text-white font-mono-numbers mt-0.5 block flex items-center gap-1.5">
+                  <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-xs uppercase font-mono text-slate-500 tracking-wider block font-medium">Total Bids Placed</span>
+                    <span className="text-xl font-bold text-slate-900 font-mono-numbers mt-0.5 flex items-center gap-1.5">
                       {totalBidsCount}
-                      <Flame className="w-4 h-4 text-zinc-400" />
+                      <Flame className="w-4 h-4 text-amber-500" />
                     </span>
                   </div>
                 </div>
 
-                {/* Specification Table */}
-                <div className="mt-4 pt-4 border-t border-zinc-900 text-xs space-y-2 text-zinc-400">
+                {/* Metadata Details */}
+                <div className="mt-4 pt-4 border-t border-slate-100 text-xs space-y-2 text-slate-600">
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-400">Auction Format</span>
-                    <span className="font-mono text-zinc-200">Single Item Timed Auction</span>
+                    <span className="text-slate-500">Auction Format</span>
+                    <span className="font-semibold text-slate-800">Timed Reserve Single-Item</span>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-400">Currency</span>
-                    <span className="font-mono text-zinc-200">USD ($)</span>
+                    <span className="text-slate-500">Currency</span>
+                    <span className="font-semibold text-slate-800">USD ($)</span>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-400">Transparency Engine</span>
-                    <span className="font-mono text-zinc-200">Real-time WebSocket & MERN</span>
+                    <span className="text-slate-500">Transparency Engine</span>
+                    <span className="font-mono text-slate-800">Real-Time WebSocket & MERN</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Live Countdown, Bidding Controls, and Bid History (Cols 6 to 12) */}
+          {/* RIGHT COLUMN: Live Countdown, Bidding Form, and History Table */}
           <div className="lg:col-span-7 space-y-6">
-            {/* Live Timer & Highest Bid Banner Cards */}
+            {/* Top Cards: Countdown & Highest Bid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* 1. Countdown Timer Box */}
-              <div className={`p-5 rounded-lg border transition-all ${
+              {/* 1. Countdown Box */}
+              <div className={`p-5 rounded-xl border bg-white shadow-xs transition-all ${
                 isAuctionEnded
-                  ? 'bg-zinc-950 border-zinc-800'
+                  ? 'border-slate-200 bg-slate-50'
                   : remainingSeconds <= 30
-                  ? 'bg-zinc-950 border-white/60 shadow-[0_0_20px_rgba(255,255,255,0.1)]'
-                  : 'bg-zinc-950 border-zinc-800'
+                  ? 'border-amber-400 ring-2 ring-amber-100'
+                  : 'border-slate-200'
               }`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5" />
+                  <span className="text-xs font-mono uppercase tracking-wider text-slate-500 flex items-center gap-1.5 font-medium">
+                    <Clock className="w-3.5 h-3.5 text-slate-600" />
                     Time Remaining
                   </span>
                   {!isAuctionEnded && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-zinc-900 border border-zinc-700 text-zinc-300 rounded">
-                      {remainingSeconds <= 30 ? 'ENDING SOON' : 'ACTIVE'}
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                      remainingSeconds <= 30 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {remainingSeconds <= 30 ? 'EXPIRING SOON' : 'ACTIVE'}
                     </span>
                   )}
                 </div>
-                <div className="text-4xl sm:text-5xl font-black font-mono-numbers tracking-tight text-white my-1">
+                <div className="text-4xl sm:text-5xl font-black font-mono-numbers tracking-tight text-slate-900 my-1">
                   {formatTime(remainingSeconds)}
                 </div>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-slate-500">
                   {isAuctionEnded
-                    ? 'Bidding has stopped. Auction closed.'
-                    : `Auction closes automatically when clock hits 00:00.`}
+                    ? 'Bids are closed. The auction has ended.'
+                    : 'Auction closes automatically when timer reaches 00:00.'}
                 </p>
               </div>
 
               {/* 2. Current Highest Bid Box */}
-              <div className={`p-5 rounded-lg border transition-all ${
-                newBidHighlight
-                  ? 'bg-zinc-900 border-white animate-flash'
-                  : 'bg-zinc-950 border-zinc-800'
+              <div className={`p-5 rounded-xl border bg-white shadow-xs transition-all ${
+                newBidHighlight ? 'border-blue-500 ring-2 ring-blue-100 animate-flash' : 'border-slate-200'
               }`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                    <TrendingUp className="w-3.5 h-3.5" />
+                  <span className="text-xs font-mono uppercase tracking-wider text-slate-500 flex items-center gap-1.5 font-medium">
+                    <TrendingUp className="w-3.5 h-3.5 text-slate-600" />
                     Current Highest Bid
                   </span>
                   {currentLeader ? (
-                    <span className="text-[10px] font-mono px-2 py-0.5 bg-white text-black font-bold rounded">
+                    <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-900 text-white font-bold rounded">
                       LEAD: {currentLeader}
                     </span>
                   ) : (
-                    <span className="text-[10px] font-mono px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded">
+                    <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
                       NO BIDS YET
                     </span>
                   )}
                 </div>
-                <div className="text-4xl sm:text-5xl font-black font-mono-numbers tracking-tight text-white my-1">
+                <div className="text-4xl sm:text-5xl font-black font-mono-numbers tracking-tight text-slate-900 my-1">
                   ${highestBidVal.toLocaleString()}
                 </div>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-slate-500">
                   {currentLeader ? (
-                    <>Held by <span className="text-white font-semibold">{currentLeader}</span></>
+                    <>Held by <span className="font-bold text-slate-800">{currentLeader}</span></>
                   ) : (
                     <>Starting minimum is ${startingPrice.toLocaleString()}</>
                   )}
@@ -499,131 +577,140 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bidding Action Console */}
-            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-6">
-              <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-900">
+            {/* Bidding Console with React Hook Form */}
+            <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-white"></div>
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-white">Place Your Bid</h3>
+                  <div className="w-2.5 h-2.5 rounded-full bg-slate-900"></div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Place Your Bid</h3>
                 </div>
-                <span className="text-xs font-mono text-zinc-400">
-                  Min Valid Bid: <span className="text-white font-bold">${(currentLeader ? highestBidVal + 1 : startingPrice).toLocaleString()}</span>
+                <span className="text-xs font-mono text-slate-600">
+                  Min Valid Bid: <span className="text-slate-900 font-bold">${minimumRequiredBid.toLocaleString()}</span>
                 </span>
               </div>
 
-              {/* Rejection Notification Banner */}
-              {rejectionError && (
-                <div className="mb-4 p-4 rounded bg-black border border-white/80 text-white flex items-start gap-3 animate-pulse-subtle">
-                  <AlertTriangle className="w-5 h-5 shrink-0 text-white mt-0.5" />
-                  <div className="flex-1">
-                    <h4 className="text-xs font-bold uppercase tracking-wider font-mono">Bid Rejected</h4>
-                    <p className="text-xs text-zinc-300 mt-0.5">{rejectionError}</p>
+              {/* Participant Identifier Card (Replaces the raw input field as requested) */}
+              <div className="mb-4 p-3.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-sm">
+                    {participantName ? participantName.charAt(0).toUpperCase() : '?'}
                   </div>
-                  <button onClick={() => setRejectionError(null)} className="text-zinc-400 hover:text-white cursor-pointer">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-              {/* Success Notification Banner */}
-              {successMessage && (
-                <div className="mb-4 p-4 rounded bg-zinc-900 border border-zinc-600 text-white flex items-start gap-3">
-                  <CheckCircle2 className="w-5 h-5 shrink-0 text-white mt-0.5" />
-                  <div className="flex-1">
-                    <h4 className="text-xs font-bold uppercase tracking-wider font-mono">Bid Accepted</h4>
-                    <p className="text-xs text-zinc-300 mt-0.5">{successMessage}</p>
-                  </div>
-                  <button onClick={() => setSuccessMessage(null)} className="text-zinc-400 hover:text-white cursor-pointer">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-              {/* Bid Form */}
-              <form onSubmit={handlePlaceBid} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Participant Name */}
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-400 mb-1.5">
-                      Participant Name
-                    </label>
+                    <div className="text-[11px] uppercase font-mono text-slate-500 font-medium">Bidding As</div>
+                    <div className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      {participantName || 'Guest User'}
+                      <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowNameModal(true)}
+                  className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-md transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Edit2 className="w-3 h-3 text-slate-500" />
+                  Change Name
+                </button>
+              </div>
+
+              {/* Server Rejection Error Banner */}
+              {serverRejectionError && (
+                <div className="mb-4 p-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-900 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="text-xs font-bold uppercase tracking-wider font-mono text-rose-800">Bid Rejected</h4>
+                    <p className="text-xs text-rose-700 mt-0.5">{serverRejectionError}</p>
+                  </div>
+                  <button onClick={() => setServerRejectionError(null)} className="text-rose-500 hover:text-rose-800 cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Server Success Banner */}
+              {serverSuccessMessage && (
+                <div className="mb-4 p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="text-xs font-bold uppercase tracking-wider font-mono text-emerald-800">Bid Accepted</h4>
+                    <p className="text-xs text-emerald-700 mt-0.5">{serverSuccessMessage}</p>
+                  </div>
+                  <button onClick={() => setServerSuccessMessage(null)} className="text-emerald-500 hover:text-emerald-800 cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Bidding Form using React Hook Form */}
+              <form onSubmit={handleBidSubmit(onPlaceBid)} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-1.5 font-medium">
+                    Bid Amount ($ USD)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-base font-bold">$</span>
                     <input
-                      type="text"
+                      type="number"
+                      step="any"
                       disabled={isAuctionEnded}
-                      value={bidderName}
-                      onChange={(e) => setBidderName(e.target.value)}
-                      placeholder="Enter your name"
-                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-white px-3.5 py-2.5 rounded text-white text-sm outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                      placeholder={`e.g. ${minimumRequiredBid}`}
+                      {...registerBid('amount', {
+                        required: 'Please enter a bid amount',
+                        validate: {
+                          isPositive: (val) => Number(val) > 0 || 'Bid amount must be greater than zero',
+                          exceedsHighest: (val) => {
+                            const num = Number(val);
+                            if (currentLeader) {
+                              return num > highestBidVal || `Bid must exceed current highest bid of $${highestBidVal.toLocaleString()}`;
+                            } else {
+                              return num >= startingPrice || `Bid must be at least the starting price of $${startingPrice.toLocaleString()}`;
+                            }
+                          },
+                        },
+                      })}
+                      className={`w-full bg-slate-50 border pl-8 pr-3.5 py-2.5 rounded-lg text-slate-900 text-base font-mono-numbers outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
+                        bidErrors.amount ? 'border-rose-400 focus:border-rose-500 bg-rose-50/30' : 'border-slate-300 focus:border-slate-900'
+                      }`}
                     />
-                    {/* Quick personas for fast demo testing */}
-                    <div className="flex items-center gap-1.5 mt-2 overflow-x-auto text-[11px] text-zinc-400">
-                      <span className="shrink-0">Quick Switch:</span>
-                      {['Alex', 'Sarah', 'Marcus', 'Elena'].map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          disabled={isAuctionEnded}
-                          onClick={() => setBidderName(name)}
-                          className={`px-2 py-0.5 rounded border transition-colors ${
-                            bidderName === name
-                              ? 'bg-white text-black border-white font-bold'
-                              : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-                          }`}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
                   </div>
 
-                  {/* Bid Amount */}
-                  <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-400 mb-1.5">
-                      Bid Amount ($ USD)
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-base font-bold">$</span>
-                      <input
-                        type="number"
+                  {/* Inline React Hook Form Validation Error */}
+                  {bidErrors.amount && (
+                    <p className="text-xs text-rose-600 mt-1.5 flex items-center gap-1 font-medium">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {bidErrors.amount.message}
+                    </p>
+                  )}
+
+                  {/* Quick Add Buttons */}
+                  <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                    <span className="text-[11px] text-slate-500 font-medium shrink-0">Quick Add:</span>
+                    {[50, 100, 250, 500].map((inc) => (
+                      <button
+                        key={inc}
+                        type="button"
                         disabled={isAuctionEnded}
-                        value={bidAmount}
-                        onChange={(e) => {
-                          setBidAmount(e.target.value);
-                          setRejectionError(null);
-                        }}
-                        placeholder={`e.g. ${highestBidVal + 50}`}
-                        className="w-full bg-zinc-900 border border-zinc-800 focus:border-white pl-8 pr-3.5 py-2.5 rounded text-white text-base font-mono-numbers outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-                      />
-                    </div>
-                    {/* Quick Increment Buttons */}
-                    <div className="flex items-center gap-1.5 mt-2">
-                      <span className="text-[11px] text-zinc-400 shrink-0">Quick Add:</span>
-                      {[50, 100, 250, 500].map((inc) => (
-                        <button
-                          key={inc}
-                          type="button"
-                          disabled={isAuctionEnded}
-                          onClick={() => handleQuickAdd(inc)}
-                          className="px-2 py-0.5 rounded border border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-white hover:text-black hover:border-white text-[11px] font-mono transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                        >
-                          +${inc}
-                        </button>
-                      ))}
-                    </div>
+                        onClick={() => handleQuickAdd(inc)}
+                        className="px-2.5 py-1 rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-900 hover:text-white hover:border-slate-900 text-slate-700 text-xs font-mono transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer font-medium"
+                      >
+                        +${inc}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Submit Button */}
+                {/* Submit Bid Button */}
                 <div className="pt-2">
                   <button
                     type="submit"
                     disabled={isAuctionEnded || submitting}
-                    className={`w-full py-3.5 px-6 rounded font-bold text-sm tracking-wide uppercase transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
+                    className={`w-full py-3.5 px-6 rounded-lg font-bold text-sm tracking-wide uppercase transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-sm ${
                       isAuctionEnded
-                        ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700'
+                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                         : submitting
-                        ? 'bg-zinc-700 text-white cursor-wait'
-                        : 'bg-white text-black hover:bg-zinc-200 active:scale-[0.99] shadow-lg'
+                        ? 'bg-slate-700 text-white cursor-wait'
+                        : 'bg-slate-900 hover:bg-slate-800 text-white active:scale-[0.99]'
                     }`}
                   >
                     {isAuctionEnded ? (
@@ -634,12 +721,12 @@ export default function App() {
                     ) : submitting ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        Validating Bid...
+                        Validating & Submitting...
                       </>
                     ) : (
                       <>
                         <ArrowUpRight className="w-4 h-4" />
-                        Submit Bid (${Number(bidAmount || 0).toLocaleString()})
+                        Place Bid {watchedBidAmount ? `($${Number(watchedBidAmount).toLocaleString()})` : ''}
                       </>
                     )}
                   </button>
@@ -647,73 +734,81 @@ export default function App() {
               </form>
             </div>
 
-            {/* Bid History Table / Audit Ledger */}
-            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-6">
-              <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-900">
+            {/* Live Bid History Ledger */}
+            <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
                 <div className="flex items-center gap-2">
-                  <History className="w-4 h-4 text-white" />
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-white">Live Bid History</h3>
+                  <History className="w-4 h-4 text-slate-700" />
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Live Bid History</h3>
                 </div>
-                <span className="text-xs font-mono text-zinc-400">
+                <span className="text-xs font-mono text-slate-500 font-medium">
                   {bids.length} {bids.length === 1 ? 'Record' : 'Records'}
                 </span>
               </div>
 
               {bids.length === 0 ? (
-                <div className="text-center py-10 border border-dashed border-zinc-900 rounded">
-                  <p className="text-zinc-400 text-sm">No bids placed yet.</p>
-                  <p className="text-zinc-400 text-xs mt-1">Starting minimum bid is ${startingPrice.toLocaleString()}.</p>
+                <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+                  <p className="text-slate-500 text-sm">No bids placed yet.</p>
+                  <p className="text-slate-400 text-xs mt-1">Starting minimum bid is ${startingPrice.toLocaleString()}.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead>
-                      <tr className="border-b border-zinc-900 text-zinc-400 font-mono text-xs uppercase">
+                      <tr className="border-b border-slate-200 text-slate-500 font-mono text-xs uppercase bg-slate-50/80">
                         <th className="py-2.5 px-3">Rank</th>
                         <th className="py-2.5 px-3">Participant</th>
                         <th className="py-2.5 px-3">Amount</th>
-                        <th className="py-2.5 px-3">Time</th>
+                        <th className="py-2.5 px-3">Timestamp</th>
                         <th className="py-2.5 px-3 text-right">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-900/80 font-mono">
+                    <tbody className="divide-y divide-slate-100 font-mono">
                       {bids.map((b, index) => {
                         const isLeading = index === 0;
                         const dateObj = new Date(b.timestamp);
                         const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        const isUserBid = b.bidderName.toLowerCase() === participantName.toLowerCase();
 
                         return (
                           <tr
                             key={b.id || index}
                             className={`transition-colors ${
-                              isLeading ? 'bg-zinc-900/60 font-semibold text-white' : 'text-zinc-400 hover:bg-zinc-900/30'
+                              isLeading
+                                ? 'bg-slate-100/80 font-semibold text-slate-900'
+                                : 'text-slate-600 hover:bg-slate-50'
                             }`}
                           >
                             <td className="py-3 px-3">
                               {isLeading ? (
-                                <span className="inline-flex items-center gap-1 text-xs bg-white text-black font-bold px-1.5 py-0.5 rounded">
+                                <span className="inline-flex items-center gap-1 text-xs bg-slate-900 text-white font-bold px-1.5 py-0.5 rounded">
                                   #1
                                 </span>
                               ) : (
-                                <span className="text-xs text-zinc-400">#{index + 1}</span>
+                                <span className="text-xs text-slate-400">#{index + 1}</span>
                               )}
                             </td>
-                            <td className="py-3 px-3 text-white font-sans font-medium">
+                            <td className="py-3 px-3 font-sans font-medium text-slate-900 flex items-center gap-1.5">
                               {b.bidderName}
+                              {isUserBid && (
+                                <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded font-sans font-bold">
+                                  YOU
+                                </span>
+                              )}
                             </td>
-                            <td className="py-3 px-3 font-mono-numbers text-white font-bold">
+                            <td className="py-3 px-3 font-mono-numbers text-slate-900 font-bold">
                               ${b.amount.toLocaleString()}
                             </td>
-                            <td className="py-3 px-3 text-xs text-zinc-400">
+                            <td className="py-3 px-3 text-xs text-slate-500">
                               {timeStr}
                             </td>
                             <td className="py-3 px-3 text-right">
                               {isLeading ? (
-                                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-white text-black rounded">
+                                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-slate-900 text-white rounded">
                                   {isAuctionEnded ? 'WINNER' : 'HIGHEST'}
                                 </span>
                               ) : (
-                                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-zinc-900 text-zinc-400 rounded border border-zinc-800">
+                                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-slate-100 text-slate-600 rounded border border-slate-200">
                                   OUTBID
                                 </span>
                               )}
@@ -731,41 +826,129 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-900 bg-black py-6 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-400 font-mono">
+      <footer className="border-t border-slate-200 bg-white py-6 mt-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 font-mono">
           <div>
             CodeRush Hackathon 2026 • Problem R2-01 Event Auction System
           </div>
-          <div className="flex items-center gap-4">
-            <span>Stack: MERN + Socket.IO</span>
+          <div className="flex items-center gap-3">
+            <span>Stack: MERN + Socket.IO + React Hook Form</span>
             <span>•</span>
-            <span>Theme: Black & White</span>
+            <span>UI: Modern Light Theme</span>
           </div>
         </div>
       </footer>
 
-      {/* Organizer Controls Modal */}
+      {/* 1. INITIAL / EDIT PARTICIPANT NAME DIALOG (Modal) */}
+      {showNameModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white border border-slate-200 w-full max-w-md rounded-2xl p-6 sm:p-7 shadow-xl relative">
+            {participantName && (
+              <button
+                onClick={() => setShowNameModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+
+            <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center mb-4 shadow-sm">
+              <UserCheck className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-xl font-bold text-slate-900">
+              {participantName ? 'Update Participant Name' : 'Welcome to Event Auction'}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 mb-5 leading-relaxed">
+              Please enter your full name to join the live timed auction room. All your bids will be registered under this name.
+            </p>
+
+            {/* React Hook Form for Name */}
+            <form onSubmit={handleNameSubmit(onSaveParticipantName)} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-1.5 font-medium">
+                  Your Full Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="e.g. Rahul Sharma"
+                  {...registerName('name', {
+                    required: 'Participant name is required to enter the auction',
+                    minLength: {
+                      value: 2,
+                      message: 'Name must be at least 2 characters long',
+                    },
+                    maxLength: {
+                      value: 40,
+                      message: 'Name cannot exceed 40 characters',
+                    },
+                    validate: (val) => !!val.trim() || 'Name cannot be empty spaces',
+                  })}
+                  className={`w-full bg-slate-50 border px-3.5 py-2.5 rounded-lg text-slate-900 text-sm font-medium outline-none transition-colors ${
+                    nameErrors.name ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40' : 'border-slate-300 focus:border-slate-900'
+                  }`}
+                />
+
+                {nameErrors.name && (
+                  <p className="text-xs text-rose-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {nameErrors.name.message}
+                  </p>
+                )}
+
+                {/* Quick Name Suggestions */}
+                <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+                  <span className="text-[11px] text-slate-400 font-mono">Suggestions:</span>
+                  {['Rahul Sharma', 'Priya Patel', 'Amit Verma', 'Ananya Roy'].map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => setNameValue('name', sug, { shouldValidate: true })}
+                      className="px-2 py-0.5 text-xs rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wide uppercase transition-colors shadow-xs cursor-pointer"
+                >
+                  {participantName ? 'Save & Continue' : 'Enter Auction Room'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2. ORGANIZER / ADMIN CONTROLS MODAL */}
       {showAdminModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-zinc-950 border border-zinc-700 w-full max-w-md rounded-lg p-6 shadow-2xl relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white border border-slate-200 w-full max-w-md rounded-2xl p-6 shadow-xl relative">
             <button
               onClick={() => setShowAdminModal(false)}
-              className="absolute top-4 right-4 text-zinc-400 hover:text-white cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-2 mb-4">
-              <Sliders className="w-5 h-5 text-white" />
-              <h3 className="text-lg font-bold text-white">Organizer / Judge Controls</h3>
+            <div className="flex items-center gap-2.5 mb-2">
+              <Sliders className="w-5 h-5 text-slate-900" />
+              <h3 className="text-lg font-bold text-slate-900">Organizer / Judge Controls</h3>
             </div>
-            <p className="text-xs text-zinc-400 mb-6">
-              Configure and instantly restart the timed auction for live evaluation and testing.
+            <p className="text-xs text-slate-500 mb-6">
+              Configure and instantly restart the timed auction for live evaluation and test cycles.
             </p>
 
-            <div className="space-y-4">
+            {/* React Hook Form for Admin Controls */}
+            <form onSubmit={handleAdminSubmit(onAdminReset)} className="space-y-4">
               <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-zinc-400 mb-2">
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-2 font-medium">
                   Auction Duration (Seconds)
                 </label>
                 <div className="grid grid-cols-3 gap-2 mb-2">
@@ -773,11 +956,11 @@ export default function App() {
                     <button
                       key={sec}
                       type="button"
-                      onClick={() => setAdminDuration(sec)}
-                      className={`py-2 text-xs font-mono rounded border transition-colors ${
-                        adminDuration === sec
-                          ? 'bg-white text-black border-white font-bold'
-                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-600'
+                      onClick={() => setAdminValue('durationSeconds', sec, { shouldValidate: true })}
+                      className={`py-2 text-xs font-mono rounded-lg border transition-colors cursor-pointer ${
+                        Number(watchedAdminDuration) === sec
+                          ? 'bg-slate-900 text-white border-slate-900 font-bold'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:border-slate-400'
                       }`}
                     >
                       {sec}s ({sec / 60}m)
@@ -786,43 +969,53 @@ export default function App() {
                 </div>
                 <input
                   type="number"
-                  value={adminDuration}
-                  onChange={(e) => setAdminDuration(e.target.value)}
-                  placeholder="Custom seconds"
-                  className="w-full bg-zinc-900 border border-zinc-800 focus:border-white px-3 py-2 rounded text-white text-sm font-mono"
+                  placeholder="Custom seconds (e.g. 15)"
+                  {...registerAdmin('durationSeconds', {
+                    required: 'Please enter duration in seconds',
+                    min: { value: 5, message: 'Duration must be at least 5 seconds' },
+                    max: { value: 3600, message: 'Duration cannot exceed 3600 seconds' },
+                  })}
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-slate-900 px-3 py-2 rounded-lg text-slate-900 text-sm font-mono outline-none"
                 />
+                {adminErrors.durationSeconds && (
+                  <p className="text-xs text-rose-600 mt-1 font-medium">{adminErrors.durationSeconds.message}</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-zinc-400 mb-2">
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-2 font-medium">
                   Starting Price ($ USD)
                 </label>
                 <input
                   type="number"
-                  value={adminStartPrice}
-                  onChange={(e) => setAdminStartPrice(e.target.value)}
                   placeholder="Starting Price"
-                  className="w-full bg-zinc-900 border border-zinc-800 focus:border-white px-3 py-2 rounded text-white text-sm font-mono"
+                  {...registerAdmin('startingPrice', {
+                    required: 'Please enter starting price',
+                    min: { value: 1, message: 'Starting price must be at least $1' },
+                  })}
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-slate-900 px-3 py-2 rounded-lg text-slate-900 text-sm font-mono outline-none"
                 />
+                {adminErrors.startingPrice && (
+                  <p className="text-xs text-rose-600 mt-1 font-medium">{adminErrors.startingPrice.message}</p>
+                )}
               </div>
 
               <div className="pt-4 flex gap-3">
                 <button
                   type="button"
                   onClick={() => setShowAdminModal(false)}
-                  className="flex-1 py-2.5 px-4 rounded border border-zinc-800 text-zinc-300 hover:text-white text-xs font-mono cursor-pointer"
+                  className="flex-1 py-2.5 px-4 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-mono cursor-pointer font-medium"
                 >
                   Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={handleAdminReset}
-                  className="flex-1 py-2.5 px-4 rounded bg-white text-black hover:bg-zinc-200 text-xs font-bold font-mono uppercase transition-colors cursor-pointer"
+                  type="submit"
+                  className="flex-1 py-2.5 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold font-mono uppercase transition-colors cursor-pointer shadow-xs"
                 >
                   Reset & Start
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}
