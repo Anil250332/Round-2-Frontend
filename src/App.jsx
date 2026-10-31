@@ -23,43 +23,39 @@ import {
   ShieldCheck,
   Menu,
   Sparkles,
-  Package,
-  Image as ImageIcon,
-  DollarSign,
-  Timer,
-  ExternalLink,
-  ChevronRight,
+  Zap,
 } from 'lucide-react';
 
-const BACKEND_URL = 'http://localhost:5000';
+// Connect to Render backend URL as specified by user
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://round-2-backend.onrender.com';
 
-// Preset item images for quick 1-click auction creation
+// Sample presets in Indian Rupees (₹)
 const ITEM_PRESETS = [
   {
     title: "Leica M-Monochrom 'Stealth Edition'",
     description: "Iconic rangefinder crafted exclusively for high-contrast black & white imagery. Matte black chassis with 40MP monochrome sensor.",
-    startingPrice: 1000,
+    startingPrice: 5000,
     durationSeconds: 180,
     imageUrl: "/item.jpg",
   },
   {
     title: "Audemars Piguet Royal Oak 'Jumbo' Extra-Thin",
     description: "Legendary 39mm stainless steel case with 'Petite Tapisserie' dial and ultra-thin selfwinding calibre.",
-    startingPrice: 2500,
+    startingPrice: 25000,
     durationSeconds: 120,
     imageUrl: "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=1000&q=80",
   },
   {
     title: "Custom Cyberpunk Mechanical Keyboard",
     description: "CNC machined anodized aluminum casing, lubed Holy Panda tactile switches, and hand-cast artisan keycaps.",
-    startingPrice: 450,
-    durationSeconds: 60,
+    startingPrice: 3500,
+    durationSeconds: 90,
     imageUrl: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80",
   },
   {
     title: "Rare First-Edition Vintage Comic Book",
     description: "Museum-grade preserved collector's issue, pristine condition with certified archival acrylic case.",
-    startingPrice: 1500,
+    startingPrice: 12000,
     durationSeconds: 180,
     imageUrl: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1000&q=80",
   },
@@ -122,13 +118,12 @@ export default function App() {
     formState: { errors: createErrors },
     setValue: setCreateValue,
     watch: watchCreate,
-    reset: resetCreateForm,
   } = useForm({
     defaultValues: {
       title: "Leica M-Monochrom 'Stealth Edition'",
       description: "Iconic rangefinder crafted exclusively for high-contrast black & white imagery. Matte black chassis with 40MP monochrome sensor.",
-      startingPrice: 1000,
-      durationSeconds: 120,
+      startingPrice: 5000,
+      durationSeconds: 180,
       imageUrl: "/item.jpg",
     },
   });
@@ -143,13 +138,12 @@ export default function App() {
   } = useForm({
     defaultValues: {
       durationSeconds: 120,
-      startingPrice: 1000,
+      startingPrice: 5000,
     },
   });
 
   const watchedBidAmount = watchBid('amount');
   const watchedCreateDuration = watchCreate('durationSeconds');
-  const watchedCreateImage = watchCreate('imageUrl');
   const watchedAdminDuration = watchAdmin('durationSeconds');
 
   // Trigger modal if participant name not found
@@ -183,7 +177,10 @@ export default function App() {
         setBids(data.bids || []);
         setRemainingSeconds(data.auction.remainingSeconds);
 
-        const nextMin = (data.auction.currentHighestBidder ? data.auction.currentHighestBid : data.auction.startingPrice) + 100;
+        // Specified rule: every new bid must be at least ₹100 higher than current highest bid
+        const nextMin = data.auction.currentHighestBidder
+          ? data.auction.currentHighestBid + 100
+          : data.auction.startingPrice;
         setBidValue('amount', nextMin);
 
         if (data.auction.status === 'ENDED' && data.auction.winner && !hasTriggeredConfettiRef.current) {
@@ -192,13 +189,13 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Failed to fetch auction data:', err);
+      console.error('Failed to fetch auction data from', BACKEND_URL, err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Setup Socket.io connection
+  // Setup Socket.io connection to backend URL
   useEffect(() => {
     fetchAuctionData();
 
@@ -209,7 +206,7 @@ export default function App() {
 
     socket.on('connect', () => {
       setSocketConnected(true);
-      console.log('[Socket.io Connected]:', socket.id);
+      console.log('[Socket.io Connected to Render]:', socket.id);
     });
 
     socket.on('disconnect', () => {
@@ -232,7 +229,9 @@ export default function App() {
 
       setNewBidHighlight(true);
       setTimeout(() => setNewBidHighlight(false), 1400);
-      setBidValue('amount', data.auction.currentHighestBid + 50);
+
+      // Rule: prefill next valid bid at least ₹100 higher
+      setBidValue('amount', data.auction.currentHighestBid + 100);
     });
 
     socket.on('auction_ended', (data) => {
@@ -252,7 +251,7 @@ export default function App() {
       setServerRejectionError(null);
       setServerSuccessMessage(`Auction active for "${data.auction.title}"!`);
       setTimeout(() => setServerSuccessMessage(null), 4000);
-      setBidValue('amount', data.auction.startingPrice + 50);
+      setBidValue('amount', data.auction.startingPrice);
     });
 
     return () => {
@@ -329,7 +328,7 @@ export default function App() {
       if (!res.ok || !data.success) {
         setServerRejectionError(data.message || 'Bid rejected by auction server.');
       } else {
-        setServerSuccessMessage(`Bid of $${numericAmount.toLocaleString()} placed successfully by ${participantName}!`);
+        setServerSuccessMessage(`Bid of ₹${numericAmount.toLocaleString('en-IN')} placed successfully by ${participantName}!`);
         setTimeout(() => setServerSuccessMessage(null), 4000);
       }
     } catch (err) {
@@ -339,10 +338,10 @@ export default function App() {
     }
   };
 
-  // Quick increment buttons
+  // Quick increment buttons (strictly adding >= ₹100)
   const handleQuickAdd = (increment) => {
-    const base = auction?.currentHighestBidder ? auction.currentHighestBid : auction?.startingPrice || 1000;
-    const nextVal = base + increment;
+    const currentBase = auction?.currentHighestBidder ? auction.currentHighestBid : auction?.startingPrice || 1000;
+    const nextVal = currentBase + increment;
     setBidValue('amount', nextVal, { shouldValidate: true });
     setServerRejectionError(null);
   };
@@ -366,7 +365,6 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setServerSuccessMessage(`Auction for "${data.auction.title}" launched successfully!`);
-        // Switch automatically to Live Auction tab to place bids
         setActiveTab('bid');
         setSidebarOpen(false);
       } else {
@@ -419,13 +417,16 @@ export default function App() {
   const highestBidVal = auction?.currentHighestBid || auction?.startingPrice || 1000;
   const startingPrice = auction?.startingPrice || 1000;
   const totalBidsCount = bids.length;
-  const minimumRequiredBid = currentLeader ? highestBidVal + 1 : startingPrice;
+
+  // Specified Feature: every new bid must be at least ₹100 higher than current highest bid
+  const minimumRequiredBid = currentLeader ? highestBidVal + 100 : startingPrice;
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center p-6">
         <div className="w-10 h-10 border-3 border-slate-200 border-t-slate-800 rounded-full animate-spin mb-4"></div>
-        <p className="text-slate-500 font-mono text-sm tracking-wider uppercase">Loading Event Auction...</p>
+        <p className="text-slate-500 font-mono text-sm tracking-wider uppercase">Connecting to Auction Server...</p>
+        <p className="text-xs text-slate-400 font-mono mt-1">{BACKEND_URL}</p>
       </div>
     );
   }
@@ -433,7 +434,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col md:flex-row">
       {/* ======================================================== */}
-      {/* SIDEBAR NAVIGATION (2 Options: Place Bid & Create Bid)   */}
+      {/* SIDEBAR NAVIGATION (Option 1: Live Bid, Option 2: Create) */}
       {/* ======================================================== */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-200 flex flex-col justify-between transition-transform duration-300 ease-in-out md:translate-x-0 md:static ${
@@ -441,7 +442,7 @@ export default function App() {
         }`}
       >
         <div>
-          {/* Sidebar Header / Logo */}
+          {/* Logo & App Title */}
           <div className="h-16 px-5 border-b border-slate-200 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold shadow-xs">
@@ -449,7 +450,7 @@ export default function App() {
               </div>
               <div>
                 <span className="font-extrabold text-sm tracking-tight text-slate-900 block leading-tight">CODERUSH</span>
-                <span className="text-[10px] font-mono text-slate-500 block">Auction Hub</span>
+                <span className="text-[10px] font-mono text-slate-500 block">INR Auction Hub</span>
               </div>
             </div>
 
@@ -483,7 +484,7 @@ export default function App() {
                 <Gavel className={`w-4 h-4 ${activeTab === 'bid' ? 'text-white' : 'text-slate-500'}`} />
                 <div className="text-left">
                   <div className="leading-tight font-bold">Live Auction</div>
-                  <div className={`text-[10px] ${activeTab === 'bid' ? 'text-slate-300' : 'text-slate-400'}`}>Place Bids</div>
+                  <div className={`text-[10px] ${activeTab === 'bid' ? 'text-slate-300' : 'text-slate-400'}`}>Place Bids (₹)</div>
                 </div>
               </div>
               <span className={`w-2 h-2 rounded-full ${isAuctionEnded ? 'bg-slate-400' : 'bg-emerald-400 animate-pulse'}`}></span>
@@ -505,15 +506,19 @@ export default function App() {
                 <PlusCircle className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
                 <div className="text-left">
                   <div className="leading-tight font-bold">Create Auction</div>
-                  <div className={`text-[10px] ${activeTab === 'create' ? 'text-slate-300' : 'text-slate-400'}`}>New Item & Timer</div>
+                  <div className={`text-[10px] ${activeTab === 'create' ? 'text-slate-300' : 'text-slate-400'}`}>New Lot & Timer</div>
                 </div>
               </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">New</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">₹ INR</span>
             </button>
           </div>
+
+          {/* Rule Reminder Callout */}
+         
+         
         </div>
 
-        {/* Sidebar Footer: Participant Details & Switch */}
+        {/* Sidebar Footer: Participant & Controls */}
         <div className="p-4 border-t border-slate-200 bg-slate-50/70">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -559,7 +564,7 @@ export default function App() {
       {/* MAIN CONTENT AREA                                        */}
       {/* ======================================================== */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Navbar */}
+        {/* Top Header Navbar */}
         <header className="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-20 shadow-xs h-16 flex items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <button
@@ -572,28 +577,26 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
-                  {activeTab === 'bid' ? 'Live Timed Auction' : 'Create New Auction Lot'}
+                  {activeTab === 'bid' ? 'Live Timed Auction (₹ INR)' : 'Create Auction Lot (₹ INR)'}
                 </h2>
-                <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono border border-slate-200 font-semibold hidden sm:inline">
-                  R2-01
+                <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-mono border border-emerald-200 font-semibold hidden sm:inline">
+                  ₹ Indian Rupee
                 </span>
               </div>
-              <p className="text-xs text-slate-500 hidden sm:block">
-                {activeTab === 'bid'
-                  ? 'Real-time bidding, current highest bid ledger, and winner determination'
-                  : 'Configure single item title, description, starting price, and timer duration'}
+              <p className="text-xs text-slate-500 hidden sm:block truncate max-w-md">
+                Connected to: {BACKEND_URL}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Live Sync Status */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Live Socket Status */}
             <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs text-slate-600">
               <span className={`w-2 h-2 rounded-full ${socketConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
-              <span className="hidden sm:inline font-mono font-medium">{socketConnected ? 'LIVE SYNC' : 'OFFLINE'}</span>
+              <span className="hidden sm:inline font-mono font-medium">{socketConnected ? 'RENDER LIVE' : 'CONNECTING'}</span>
             </div>
 
-            {/* Quick Switch Button between Tabs in Header */}
+            {/* Switch Tab Button */}
             {activeTab === 'bid' ? (
               <button
                 onClick={() => setActiveTab('create')}
@@ -608,7 +611,7 @@ export default function App() {
                 className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors shadow-2xs cursor-pointer"
               >
                 <Gavel className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">View Live Auction</span>
+                <span className="hidden sm:inline">View Auction</span>
               </button>
             )}
           </div>
@@ -635,19 +638,19 @@ export default function App() {
                           <span className="text-xs font-mono tracking-wider uppercase px-2.5 py-0.5 bg-slate-900 text-white rounded font-bold">
                             AUCTION CONCLUDED
                           </span>
-                          <span className="text-xs text-slate-500 font-mono">Bidding Closed</span>
+                          <span className="text-xs text-slate-500 font-mono">Bidding Stopped</span>
                         </div>
                         <h2 className="text-xl sm:text-2xl font-bold mt-1 text-slate-900">
                           {auction?.winner ? (
                             <>Winner: <span className="underline underline-offset-4 decoration-slate-400">{auction.winner.name}</span></>
                           ) : (
-                            'No Winner (No bids placed)'
+                            'No Winner (No qualifying bids placed)'
                           )}
                         </h2>
                         <p className="text-sm text-slate-600 mt-0.5">
                           {auction?.winner
-                            ? `Final hammer price: $${auction.winner.amount.toLocaleString()} • Winner determined transparently`
-                            : 'The auction has ended with zero qualifying bids.'}
+                            ? `Final winning price: ₹${auction.winner.amount.toLocaleString('en-IN')} • Hammer dropped`
+                            : 'The auction has ended without qualifying bids.'}
                         </p>
                       </div>
                     </div>
@@ -674,7 +677,7 @@ export default function App() {
 
               {/* 2-Column Responsive Layout */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                {/* LEFT: Item Details & Starting Price */}
+                {/* LEFT: Item Details & Starting Price in INR */}
                 <div className="lg:col-span-5 space-y-6">
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
                     {/* Item Photo */}
@@ -713,7 +716,7 @@ export default function App() {
                         <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200">
                           <span className="text-xs uppercase font-mono text-slate-500 tracking-wider block font-medium">Starting Price</span>
                           <span className="text-xl font-bold text-slate-900 font-mono-numbers mt-0.5 block">
-                            ${startingPrice.toLocaleString()}
+                            ₹{startingPrice.toLocaleString('en-IN')}
                           </span>
                         </div>
 
@@ -726,15 +729,28 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Transparency Engine */}
+                      {/* Rule Badge */}
+                      <div className="mt-4 p-3 bg-amber-50/80 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+                        <Zap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold">Specified Bidding Rule:</span>
+                          <p className="text-[11px] text-amber-700 mt-0.5">
+                            Every new bid must be at least ₹100 higher than the current highest bid.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Metadata Details */}
                       <div className="mt-4 pt-4 border-t border-slate-100 text-xs space-y-2 text-slate-600">
                         <div className="flex justify-between py-1">
-                          <span className="text-slate-500">Auction Engine</span>
-                          <span className="font-semibold text-slate-800">Timed Single-Item Auction</span>
+                          <span className="text-slate-500">Currency</span>
+                          <span className="font-semibold text-slate-800">Indian Rupee (₹ / INR)</span>
                         </div>
                         <div className="flex justify-between py-1">
-                          <span className="text-slate-500">Transparency Engine</span>
-                          <span className="font-mono text-slate-800">Real-Time MERN & Socket.IO</span>
+                          <span className="text-slate-500">Backend Server</span>
+                          <span className="font-mono text-slate-800 text-[11px] truncate max-w-[200px]">
+                            {BACKEND_URL}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -796,13 +812,13 @@ export default function App() {
                         )}
                       </div>
                       <div className="text-4xl sm:text-5xl font-black font-mono-numbers tracking-tight text-slate-900 my-1">
-                        ${highestBidVal.toLocaleString()}
+                        ₹{highestBidVal.toLocaleString('en-IN')}
                       </div>
                       <p className="text-xs text-slate-500">
                         {currentLeader ? (
                           <>Held by <span className="font-bold text-slate-800">{currentLeader}</span></>
                         ) : (
-                          <>Starting minimum is ${startingPrice.toLocaleString()}</>
+                          <>Starting minimum is ₹{startingPrice.toLocaleString('en-IN')}</>
                         )}
                       </p>
                     </div>
@@ -813,10 +829,10 @@ export default function App() {
                     <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
                       <div className="flex items-center gap-2">
                         <div className="w-2.5 h-2.5 rounded-full bg-slate-900"></div>
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Place Your Bid</h3>
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Place Your Bid (₹)</h3>
                       </div>
                       <span className="text-xs font-mono text-slate-600">
-                        Min Valid Bid: <span className="text-slate-900 font-bold">${minimumRequiredBid.toLocaleString()}</span>
+                        Min Valid Bid: <span className="text-slate-900 font-bold">₹{minimumRequiredBid.toLocaleString('en-IN')}</span>
                       </span>
                     </div>
 
@@ -873,14 +889,20 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Form */}
+                    {/* Form with React Hook Form Validations */}
                     <form onSubmit={handleBidSubmit(onPlaceBid)} className="space-y-4">
                       <div>
-                        <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-1.5 font-medium">
-                          Bid Amount ($ USD)
-                        </label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs font-mono uppercase tracking-wider text-slate-600 font-medium">
+                            Bid Amount (₹ INR)
+                          </label>
+                          <span className="text-[11px] text-slate-500 font-mono">
+                            Required: ≥ ₹{minimumRequiredBid.toLocaleString('en-IN')}
+                          </span>
+                        </div>
+
                         <div className="relative">
-                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-base font-bold">$</span>
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-base font-bold">₹</span>
                           <input
                             type="number"
                             step="any"
@@ -890,12 +912,18 @@ export default function App() {
                               required: 'Please enter a bid amount',
                               validate: {
                                 isPositive: (val) => Number(val) > 0 || 'Bid amount must be greater than zero',
-                                exceedsHighest: (val) => {
+                                atLeast100Higher: (val) => {
                                   const num = Number(val);
                                   if (currentLeader) {
-                                    return num > highestBidVal || `Bid must exceed current highest bid of $${highestBidVal.toLocaleString()}`;
+                                    return (
+                                      num >= highestBidVal + 100 ||
+                                      `Every new bid must be at least ₹100 higher than current highest bid of ₹${highestBidVal.toLocaleString('en-IN')} (Minimum valid bid: ₹${(highestBidVal + 100).toLocaleString('en-IN')})`
+                                    );
                                   } else {
-                                    return num >= startingPrice || `Bid must be at least the starting price of $${startingPrice.toLocaleString()}`;
+                                    return (
+                                      num >= startingPrice ||
+                                      `Bid must be at least the starting price of ₹${startingPrice.toLocaleString('en-IN')}`
+                                    );
                                   }
                                 },
                               },
@@ -908,15 +936,15 @@ export default function App() {
 
                         {bidErrors.amount && (
                           <p className="text-xs text-rose-600 mt-1.5 flex items-center gap-1 font-medium">
-                            <AlertTriangle className="w-3.5 h-3.5" />
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                             {bidErrors.amount.message}
                           </p>
                         )}
 
-                        {/* Quick Increment Shortcuts */}
+                        {/* Quick Increment Shortcuts (strictly >= ₹100) */}
                         <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
                           <span className="text-[11px] text-slate-500 font-medium shrink-0">Quick Add:</span>
-                          {[50, 100, 250, 500].map((inc) => (
+                          {[100, 200, 500, 1000].map((inc) => (
                             <button
                               key={inc}
                               type="button"
@@ -924,7 +952,7 @@ export default function App() {
                               onClick={() => handleQuickAdd(inc)}
                               className="px-2.5 py-1 rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-900 hover:text-white hover:border-slate-900 text-slate-700 text-xs font-mono transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer font-medium"
                             >
-                              +${inc}
+                              +₹{inc}
                             </button>
                           ))}
                         </div>
@@ -954,7 +982,7 @@ export default function App() {
                         ) : (
                           <>
                             <ArrowUpRight className="w-4 h-4" />
-                            Place Bid {watchedBidAmount ? `($${Number(watchedBidAmount).toLocaleString()})` : ''}
+                            Place Bid {watchedBidAmount ? `(₹${Number(watchedBidAmount).toLocaleString('en-IN')})` : ''}
                           </>
                         )}
                       </button>
@@ -966,7 +994,7 @@ export default function App() {
                     <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
                       <div className="flex items-center gap-2">
                         <History className="w-4 h-4 text-slate-700" />
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Live Bid History</h3>
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">Live Bid History (₹)</h3>
                       </div>
                       <span className="text-xs font-mono text-slate-500 font-medium">
                         {bids.length} {bids.length === 1 ? 'Record' : 'Records'}
@@ -976,7 +1004,7 @@ export default function App() {
                     {bids.length === 0 ? (
                       <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg bg-slate-50/50">
                         <p className="text-slate-500 text-sm">No bids placed yet.</p>
-                        <p className="text-slate-400 text-xs mt-1">Starting minimum bid is ${startingPrice.toLocaleString()}.</p>
+                        <p className="text-slate-400 text-xs mt-1">Starting minimum bid is ₹{startingPrice.toLocaleString('en-IN')}.</p>
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
@@ -985,7 +1013,7 @@ export default function App() {
                             <tr className="border-b border-slate-200 text-slate-500 font-mono text-xs uppercase bg-slate-50/80">
                               <th className="py-2.5 px-3">Rank</th>
                               <th className="py-2.5 px-3">Participant</th>
-                              <th className="py-2.5 px-3">Amount</th>
+                              <th className="py-2.5 px-3">Amount (₹)</th>
                               <th className="py-2.5 px-3">Timestamp</th>
                               <th className="py-2.5 px-3 text-right">Status</th>
                             </tr>
@@ -1024,7 +1052,7 @@ export default function App() {
                                     )}
                                   </td>
                                   <td className="py-3 px-3 font-mono-numbers text-slate-900 font-bold">
-                                    ${b.amount.toLocaleString()}
+                                    ₹{b.amount.toLocaleString('en-IN')}
                                   </td>
                                   <td className="py-3 px-3 text-xs text-slate-500">
                                     {timeStr}
@@ -1067,12 +1095,12 @@ export default function App() {
                   <div>
                     <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Create & Launch Timed Auction</h2>
                     <p className="text-xs sm:text-sm text-slate-500">
-                      Configure your item, set the starting price and timer, and launch for all live participants.
+                      Configure your item, set the starting price in Indian Rupees (₹) and timer, and launch live on Render.
                     </p>
                   </div>
                 </div>
 
-                {/* Quick Presets Carousel / Cards */}
+                {/* Quick Presets Carousel */}
                 <div className="mt-6 pt-6 border-t border-slate-100">
                   <span className="text-xs font-mono uppercase tracking-wider text-slate-500 font-semibold block mb-3">
                     Quick Sample Presets (1-Click Fill)
@@ -1089,7 +1117,7 @@ export default function App() {
                         </div>
                         <h4 className="text-xs font-bold text-slate-900 truncate">{p.title}</h4>
                         <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 mt-1">
-                          <span>${p.startingPrice}</span>
+                          <span>₹{p.startingPrice.toLocaleString('en-IN')}</span>
                           <span>{p.durationSeconds}s</span>
                         </div>
                       </div>
@@ -1148,20 +1176,20 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Starting Price */}
+                    {/* Starting Price in INR */}
                     <div>
                       <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-1.5 font-medium">
-                        Starting Price ($ USD) <span className="text-rose-500">*</span>
+                        Starting Price (₹ INR) <span className="text-rose-500">*</span>
                       </label>
                       <div className="relative">
-                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono font-bold">$</span>
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono font-bold">₹</span>
                         <input
                           type="number"
                           step="any"
-                          placeholder="1000"
+                          placeholder="5000"
                           {...registerCreate('startingPrice', {
                             required: 'Starting price is required',
-                            min: { value: 1, message: 'Starting price must be at least $1' },
+                            min: { value: 1, message: 'Starting price must be at least ₹1' },
                           })}
                           className={`w-full bg-slate-50 border pl-8 pr-3.5 py-2.5 rounded-lg text-slate-900 font-mono-numbers text-sm font-bold outline-none transition-colors ${
                             createErrors.startingPrice ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40' : 'border-slate-300 focus:border-slate-900'
@@ -1254,7 +1282,7 @@ export default function App() {
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 text-amber-300" />
-                          Launch Timed Auction
+                          Launch Timed Auction (₹)
                         </>
                       )}
                     </button>
@@ -1272,9 +1300,9 @@ export default function App() {
               CodeRush Hackathon 2026 • Problem R2-01 Event Auction System
             </div>
             <div className="flex items-center gap-3">
-              <span>Sidebar: [Live Auction • Create Auction]</span>
+              <span>Currency: ₹ INR</span>
               <span>•</span>
-              <span>Stack: MERN + Socket.IO</span>
+              <span>Backend: https://round-2-backend.onrender.com</span>
             </div>
           </div>
         </footer>
@@ -1303,7 +1331,7 @@ export default function App() {
               {participantName ? 'Update Participant Name' : 'Welcome to Event Auction'}
             </h3>
             <p className="text-xs text-slate-500 mt-1 mb-5 leading-relaxed">
-              Please enter your full name to join the live timed auction room. All your bids will be registered under this name.
+              Please enter your full name to join the live timed auction room. All bids will be placed in Indian Rupees (₹) under this name.
             </p>
 
             <form onSubmit={handleNameSubmit(onSaveParticipantName)} className="space-y-4">
@@ -1426,14 +1454,14 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-mono uppercase tracking-wider text-slate-600 mb-2 font-medium">
-                  Starting Price ($ USD)
+                  Starting Price (₹ INR)
                 </label>
                 <input
                   type="number"
-                  placeholder="Starting Price"
+                  placeholder="Starting Price (e.g. 5000)"
                   {...registerAdmin('startingPrice', {
                     required: 'Please enter starting price',
-                    min: { value: 1, message: 'Starting price must be at least $1' },
+                    min: { value: 1, message: 'Starting price must be at least ₹1' },
                   })}
                   className="w-full bg-slate-50 border border-slate-300 focus:border-slate-900 px-3 py-2 rounded-lg text-slate-900 text-sm font-mono outline-none"
                 />
@@ -1454,7 +1482,7 @@ export default function App() {
                   type="submit"
                   className="flex-1 py-2.5 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold font-mono uppercase transition-colors cursor-pointer shadow-xs"
                 >
-                  Reset & Start
+                  Reset & Start (₹)
                 </button>
               </div>
             </form>
